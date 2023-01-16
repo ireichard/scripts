@@ -24,8 +24,8 @@ grid_entry = (8, 8)
 green = (0, 230, 0)
 red = (230, 0, 0)
 blue = (0, 0, 230)
-# white = (230, 230, 230)
 white = (0, 0, 0)
+null_tile = np.zeros((grid_entry[1], grid_entry[0], 3), np.uint8)
 
 
 class JSONEntry:
@@ -41,10 +41,12 @@ class JSONEntry:
         self._y = y
 
     def to_json(self):
-        return json.dumps(self, default=lambda o: o.__dict__, indent=4)
+        return json.dumps(self, default=lambda o: o.__dict__, separators=(',', ':'))
 
 
 class GUIWindow(tk.Frame):
+    """Main GUI Application thread
+    """
     def __init__(self, master):
         self.tk_master = master
         self.resolution = gui_resolution
@@ -69,6 +71,7 @@ class GUIWindow(tk.Frame):
         self.tiling_event_x = 0
         self.tiling_event_y = 0
         self.tiling_clicked = False
+        self.tiling_right_clicked = False
         # Generate Grid
         self.max_tiles_tiling_x = int(math.floor(app_tile_area[0] / ((grid_entry[0]) + self.tiles_spacing)))
         self.max_tiles_tiling_y = int(math.floor(app_tile_area[1] / ((grid_entry[1]) + self.tiles_spacing)))
@@ -97,10 +100,8 @@ class GUIWindow(tk.Frame):
             self.tiling_canvas = cv2.line(self.tiling_canvas, (0, self.tiling_grid_locations_y[i]),
                                           (self.max_tiles_tiling_x * grid_entry[0] + self.max_tiles_tiling_x,
                                            self.tiling_grid_locations_y[i]), white, 1)
-        # cv2.imshow('img', self.tiling_canvas)
-        # cv2.waitKey(ord('q'))
         # Set the Canvas to tkinter
-        self.tiling_canvas_original = self.tiling_canvas.copy()
+        self.tiling_canvas_modified = self.tiling_canvas.copy()
         self.tiling_im = Image.fromarray(self.tiling_canvas)
         self.tiling_im_tk = ImageTk.PhotoImage(image=self.tiling_im)
         self.tiling_im_tk_canvas = tk.Canvas(master=self.tiling_area, width=self.tiling_canvas_x,
@@ -108,8 +109,10 @@ class GUIWindow(tk.Frame):
         self.tiling_im_tk_cv_cfg = self.tiling_im_tk_canvas.create_image((0, 0), anchor=tk.NW, image=self.tiling_im_tk)
         self.tiling_im_tk_canvas.bind('<Motion>', self.tiling_area_mouse_motion)
         self.tiling_im_tk_canvas.bind('<Button-1>', self.tiling_area_mouse_click)
+        self.tiling_im_tk_canvas.bind('<Button-3>', self.tiling_area_mouse_click_right)
         self.tiling_current_hovered_tile = -1
         self.tiling_current_selected_tile = -1
+        self.tiling_current_selected_tile_right = -1
 
         # Selection Area
         self.total_selections_x = 16
@@ -120,8 +123,6 @@ class GUIWindow(tk.Frame):
         self.sel_clicked = False
         # Generate tiles from image
         self.tilemap = cv2.imread('tilemap.png')
-        # cv2.imshow('img', self.tilemap)
-        # cv2.waitKey(ord('q'))
         self.tilemap = cv2.cvtColor(self.tilemap, cv2.COLOR_BGR2RGB)
         self.sel_tiles_cv = []
         self.start_coordinate_x = 0
@@ -134,15 +135,12 @@ class GUIWindow(tk.Frame):
                             self.tiles_spacing_size * i),
                     j * grid_entry[1] + (self.tiles_spacing_size * j):(j * grid_entry[1] + grid_entry[1]) + (
                             self.tiles_spacing_size * j)])
-        # cv2.imwrite('img.png', self.sel_tiles_cv[69])
-        # cv2.imshow('img', self.sel_tiles_cv[69])
-        # cv2.waitKey(ord('q'))
         # Render tiles to new opencv image
-        self.max_tiles_x = int(math.floor(app_selection_area[0] / ((grid_entry[0] * 4) + self.tiles_spacing)))
-        self.max_tiles_y = int(math.ceil((self.total_selections_x * self.total_selections_y) / self.max_tiles_x))
-        self.selection_canvas_x = self.max_tiles_x * ((grid_entry[0] * 4) + self.tiles_spacing) + 1
-        self.selection_canvas_y = self.max_tiles_y * ((grid_entry[1] * 4) + self.tiles_spacing) + 1
-        print(f'Selection Canvas {self.max_tiles_x} {self.max_tiles_y} | {self.selection_canvas_x} '
+        self.sel_max_tiles_x = int(math.floor(app_selection_area[0] / ((grid_entry[0] * 4) + self.tiles_spacing)))
+        self.sel_max_tiles_y = int(math.ceil((self.total_selections_x * self.total_selections_y) / self.sel_max_tiles_x))
+        self.selection_canvas_x = self.sel_max_tiles_x * ((grid_entry[0] * 4) + self.tiles_spacing) + 1
+        self.selection_canvas_y = self.sel_max_tiles_y * ((grid_entry[1] * 4) + self.tiles_spacing) + 1
+        print(f'Selection Canvas {self.sel_max_tiles_x} {self.sel_max_tiles_y} | {self.selection_canvas_x} '
               f'{self.selection_canvas_y}')
         self.selection_canvas = np.zeros((self.selection_canvas_y, self.selection_canvas_x, 3), np.uint8)
         self.resized_tile_size = (grid_entry[0] * 4, grid_entry[1] * 4)
@@ -165,7 +163,8 @@ class GUIWindow(tk.Frame):
         self.current_selection_selected_tile = -1
 
         # Context Area
-        write_json_btn = Button(master=self.context_area, text='SAVE JSON', anchor='w', command=self.write_json)
+        load_map_btn = Button(master=self.context_area, text='LOAD JSON', anchor='n', command=self.read_json)
+        write_json_btn = Button(master=self.context_area, text='SAVE JSON', anchor='n', command=self.write_json)
 
         # Grids
         self.tiling_area.grid(row=0, column=1, sticky=W)
@@ -174,7 +173,8 @@ class GUIWindow(tk.Frame):
         self.tiling_im_tk_canvas.grid(row=0, column=0, sticky=NW)
         self.sel_im_tk_canvas.grid(row=0, column=0, sticky=NW)
         # Context Menu
-        write_json_btn.grid(row=0, column=0, sticky=N)
+        load_map_btn.grid(row=0, column=0)
+        write_json_btn.grid(row=1, column=0)
         self.update()
 
     def get_coordinates_at_tiling_tile(self, tile: int) -> list:
@@ -193,10 +193,10 @@ class GUIWindow(tk.Frame):
     def get_coordinates_at_selection_tile(self, tile: int) -> list:
         """Returns as [x1, x2, y1, y2]
         """
-        row = int(math.floor(tile / self.max_tiles_x))
+        row = int(math.floor(tile / self.sel_max_tiles_x))
         column = tile
-        while column >= self.max_tiles_x:
-            column = column - self.max_tiles_x
+        while column >= self.sel_max_tiles_x:
+            column = column - self.sel_max_tiles_x
         y1 = self.pad + (self.resized_tile_size[1] * row) + (row * self.tiles_spacing)
         y2 = self.pad + (self.resized_tile_size[1] * row + self.resized_tile_size[1]) + (row * self.tiles_spacing)
         x1 = self.pad + (self.resized_tile_size[0] * column) + (column * self.tiles_spacing)
@@ -218,7 +218,7 @@ class GUIWindow(tk.Frame):
         row = int(math.floor(y / (self.resized_tile_size[1] + self.tiles_spacing)))
         column = int(math.floor(x / (self.resized_tile_size[0] + self.tiles_spacing)))
         if row > 0:
-            tmp = row * self.max_tiles_x + column
+            tmp = row * self.sel_max_tiles_x + column
             if tmp < len(self.sel_tiles_cv):
                 return tmp
             return -1
@@ -227,17 +227,22 @@ class GUIWindow(tk.Frame):
 
     def draw_tile_to_tiling_canvas(self) -> None:
         coords_tile = self.get_coordinates_at_tiling_tile(self.tiling_current_hovered_tile)
-        self.tiling_canvas_original[coords_tile[2]:coords_tile[3], coords_tile[0]:coords_tile[1]] = \
+        self.tiling_canvas_modified[coords_tile[2]:coords_tile[3], coords_tile[0]:coords_tile[1]] = \
             self.sel_tiles_cv[self.current_selection_selected_tile]
         # Update Canvas
-        self.tiling_im_tk = ImageTk.PhotoImage(Image.fromarray(self.tiling_canvas_original))
+        self.tiling_im_tk = ImageTk.PhotoImage(Image.fromarray(self.tiling_canvas_modified))
         self.tiling_im_tk_canvas.itemconfig(self.tiling_im_tk_cv_cfg, image=self.tiling_im_tk)
-        # for i in range(len(self.tiling_canvas_tiles)):
-        #    if self.tiling_canvas_tiles[i] != -1:
-        #        print(self.tiling_canvas_tiles[i])
+
+    def draw_tile_removal_to_tiling_canvas(self) -> None:
+        """Removes pixel data from where a tile was, setting it to default empty values.
+        """
+        coords_tile = self.get_coordinates_at_tiling_tile(self.tiling_current_hovered_tile)
+        self.tiling_canvas_modified[coords_tile[2]:coords_tile[3], coords_tile[0]:coords_tile[1]] = null_tile
+        self.tiling_im_tk = ImageTk.PhotoImage(Image.fromarray(self.tiling_canvas_modified))
+        self.tiling_im_tk_canvas.itemconfig(self.tiling_im_tk_cv_cfg, image=self.tiling_im_tk)
 
     def draw_square_tiling_tiles(self, coords_tile: list) -> None:
-        self.tiling_canvas = self.tiling_canvas_original.copy()
+        self.tiling_canvas = self.tiling_canvas_modified.copy()
         # Draw blue Square
         if self.tiling_current_hovered_tile > -1:
             self.tiling_canvas = cv2.rectangle(self.tiling_canvas, (coords_tile[0], coords_tile[2]),
@@ -262,6 +267,9 @@ class GUIWindow(tk.Frame):
     def tiling_area_mouse_click(self, event) -> None:
         self.tiling_clicked = True
 
+    def tiling_area_mouse_click_right(self, event) -> None:
+        self.tiling_right_clicked = True
+
     def selection_area_mouse_click(self, event) -> None:
         self.sel_clicked = True
 
@@ -281,9 +289,19 @@ class GUIWindow(tk.Frame):
         _x = 0
         _y = 0
         entries = []
-        out_start = '{"list":['
+        # Json preambles for object data, can be edited here temporarily instead of user defined in GUI
+        # May change this later so other users can define layer names
+        out_start = '{'
+        out_start_l0 = '"listBG":['
+        out_start_l1 = '"listOBJ":['
+        out_start_l2 = '"listENT":['
+        out_start_l3 = '"listFG":['
+        out_start_l4 = '"listEFF":['
+        out_start_l5 = '"listLIT":['
+        out_end_mid = '],'
         out_end = ']}'
         out = out_start
+        out += out_start_l0
         for i in range(len(self.tiling_canvas_tiles)):
             if self.tiling_canvas_tiles[i] != -1:
                 # Calculate coordinates
@@ -292,11 +310,9 @@ class GUIWindow(tk.Frame):
                     _x = i - _y * self.max_tiles_tiling_x
                 else:
                     _x = i
-                # Write to json
+                # Export to json wrapper object
                 entries.append(JSONEntry(x=_x, y=_y, tile=self.tiling_canvas_tiles[i]))
-
-        # Invert y axis for Unity
-        # Max and min algorithm for y-axis
+        # Invert y axis for Unity, opencv draws from top left y=0, Unity uses a math x-y plot
         max_entry = 0
         min_entry = sys.maxsize
         for i in entries:
@@ -304,31 +320,40 @@ class GUIWindow(tk.Frame):
                 max_entry = i.get_y()
             if min_entry > i.get_y():
                 min_entry = i.get_y()
-        delta = max_entry - min_entry
-        cutoff = delta/2
         # Invert
         for i in range(len(entries)):
             entries[i].set_y(y=(max_entry - entries[i].get_y()))
-
         # Write to json
         for i in range(len(entries)):
             out = out + entries[i].to_json()
             if i != len(entries) - 1:
                 out = out + ','
-        out = out + out_end
+        out = out + out_end_mid
+        out = out + out_start_l1 + out_end_mid
+        out = out + out_start_l2 + out_end_mid
+        out = out + out_start_l3 + out_end_mid
+        out = out + out_start_l4 + out_end_mid
+        out = out + out_start_l5 + out_end
         text = open('out.json', 'w')
         _ = text.write(out)
         text.close()
 
+    @staticmethod
+    def read_json():
+        """TODO Add
+        """
+        print('Read JSON button click')
+
     def update(self) -> None:
         """Update elements of the GUI
         """
-        # Check current hovered tiles
-
         # Update tile being edited
-        if self.tiling_clicked:
+        if self.tiling_clicked and not self.tiling_right_clicked:  # Left click to place tile
             self.tiling_current_selected_tile = self.get_tile_at_tiling_coordinate(self.tiling_event_x,
                                                                                    self.tiling_event_y)
+        if self.tiling_right_clicked and not self.tiling_clicked:  # Right click to remove tile
+            self.tiling_current_selected_tile_right = self.get_tile_at_tiling_coordinate(self.tiling_event_x,
+                                                                                         self.tiling_event_y)
         # Tiling
         if self.tiling_event_x != 0 or self.tiling_event_y != 0:
             # Draw blue square on the hovered tile
@@ -336,10 +361,13 @@ class GUIWindow(tk.Frame):
                                                                                   self.tiling_event_y)
             self.draw_square_tiling_tiles(self.get_coordinates_at_tiling_tile(self.tiling_current_hovered_tile))
             # Only draw the new tile on click
-            if self.tiling_clicked:
+            if self.tiling_clicked and not self.tiling_right_clicked:
                 if self.current_selection_selected_tile > -1:
                     self.tiling_canvas_tiles[self.tiling_current_selected_tile] = self.current_selection_selected_tile
                 self.draw_tile_to_tiling_canvas()
+            if self.tiling_right_clicked and not self.tiling_clicked:
+                self.tiling_canvas_tiles[self.tiling_current_selected_tile_right] = -1  # Clear the tile data
+                self.draw_tile_removal_to_tiling_canvas()  # Draw removed tile
         else:
             self.tiling_current_hovered_tile = -1
         # Selection
@@ -349,32 +377,27 @@ class GUIWindow(tk.Frame):
                                                                                         self.sel_event_y)
         else:
             self.current_selection_hovered_tile = -1
-        # Draw green and red squares
+        # Draw green and red squares in the selection area, green = hovered, red = selected
         self.sel_tile = self.get_tile_at_selection_coordinate(self.sel_event_x, self.sel_event_y)
         self.draw_squares_selection_tiles(self.get_coordinates_at_selection_tile(self.sel_tile))
-        """
-        print(f'{self.tiling_event_x} {self.tiling_event_y} {self.tiling_clicked} '
-              f'{self.tiling_current_hovered_tile} '
-              f'{self.get_coordinates_at_tiling_tile(self.tiling_current_hovered_tile)} | {self.sel_event_x} '
-              f'{self.sel_event_y} {self.sel_clicked} {self.current_selection_hovered_tile}',
-              self.get_coordinates_at_selection_tile(self.get_tile_at_selection_coordinate(
-                  self.sel_event_x, self.sel_event_y)))
-        """
 
         if self.sel_clicked:
             self.current_selection_selected_tile = self.get_tile_at_selection_coordinate(self.sel_event_x, self.sel_event_y)
             self.sel_clicked = False
         self.tiling_clicked = False
+        self.tiling_right_clicked = False
         # Call this function again
         self.after(gui_update_ms, self.update)
 
 
 def main():
+    """Sets up and starts the GUI.
+    """
     # Start GUI
     gui_window = tk.Tk()
     gui_window.geometry(str(gui_resolution[0]) + 'x' + str(gui_resolution[1]))
     gui_application = GUIWindow(gui_window)
-    gui_window.mainloop()
+    gui_application.tk_master.mainloop()
 
 
 if __name__ == '__main__':

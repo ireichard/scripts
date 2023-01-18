@@ -2,8 +2,7 @@ import sys as system
 import os
 import math
 import json
-import tkinter
-import tkinter.tix
+import copy
 
 import cv2
 import numpy as np
@@ -24,8 +23,17 @@ grid_entry = (8, 8)
 green = (0, 230, 0)
 red = (230, 0, 0)
 blue = (0, 0, 230)
-white = (0, 0, 0)
+black = (0, 0, 0)
 null_tile = np.zeros((grid_entry[1], grid_entry[0], 3), np.uint8)
+
+layer_number_to_name = {
+    0: 'Background',
+    1: 'Object',
+    2: 'Entity',
+    3: 'Foreground',
+    4: 'Effect',
+    5: 'Lighting'
+}
 
 
 class JSONEntry:
@@ -47,6 +55,7 @@ class JSONEntry:
 class GUIWindow(tk.Frame):
     """Main GUI Application thread
     """
+
     def __init__(self, master):
         self.tk_master = master
         self.resolution = gui_resolution
@@ -67,26 +76,24 @@ class GUIWindow(tk.Frame):
         self.tiles_spacing_size = 1
         self.total_tiles_x = int(math.floor(app_tile_area[0] / grid_entry[0] + self.tiles_spacing_size))
         self.total_tiles_y = int(math.floor(app_tile_area[1] / grid_entry[1] + self.tiles_spacing_size))
-        self.tk_tiles = []  # Tkinter display objects
-        self.tiling_event_x = 0
-        self.tiling_event_y = 0
-        self.tiling_clicked = False
-        self.tiling_right_clicked = False
+        self.tiling_event_x, self.tiling_event_y = 0, 0
+        self.tiling_clicked, self.tiling_right_clicked = False, False
         # Generate Grid
         self.max_tiles_tiling_x = int(math.floor(app_tile_area[0] / ((grid_entry[0]) + self.tiles_spacing)))
         self.max_tiles_tiling_y = int(math.floor(app_tile_area[1] / ((grid_entry[1]) + self.tiles_spacing)))
         self.tiling_canvas_x = self.max_tiles_tiling_x * ((grid_entry[0]) + self.tiles_spacing) + 1
         self.tiling_canvas_y = self.max_tiles_tiling_y * ((grid_entry[1]) + self.tiles_spacing) + 1
-        print(f'Tile Canvas {self.max_tiles_tiling_x} {self.max_tiles_tiling_y} | '
-              f'{self.tiling_canvas_x} {self.tiling_canvas_y}')
         self.tiling_canvas = np.zeros((self.tiling_canvas_y, self.tiling_canvas_x, 3), np.uint8)
         # Fill tile data with dummy values
         self.tiling_canvas_tiles = []
         for i in range(self.max_tiles_tiling_x * self.max_tiles_tiling_y):
             self.tiling_canvas_tiles.append(-1)
+        # Set up other layers on the map
+        self.tiling_tiles_all = []
+        [self.tiling_tiles_all.append(copy.deepcopy(self.tiling_canvas_tiles))
+         for i in range(len(layer_number_to_name))]
         # Calculate grid placement
-        self.tiling_grid_locations_x = [0]
-        self.tiling_grid_locations_y = [0]
+        self.tiling_grid_locations_x, self.tiling_grid_locations_y = [0], [0]
         for i in range(self.max_tiles_tiling_x):
             self.tiling_grid_locations_x.append((i * grid_entry[0]) + (1 * i))
         for i in range(self.max_tiles_tiling_y):
@@ -95,11 +102,11 @@ class GUIWindow(tk.Frame):
         for i in range(len(self.tiling_grid_locations_x)):
             self.tiling_canvas = cv2.line(self.tiling_canvas, (self.tiling_grid_locations_x[i], 0),
                                           (self.tiling_grid_locations_x[i], self.max_tiles_tiling_y * grid_entry[1] +
-                                           self.max_tiles_tiling_y), white, 1)
+                                           self.max_tiles_tiling_y), black, 1)
         for i in range(len(self.tiling_grid_locations_y)):
             self.tiling_canvas = cv2.line(self.tiling_canvas, (0, self.tiling_grid_locations_y[i]),
                                           (self.max_tiles_tiling_x * grid_entry[0] + self.max_tiles_tiling_x,
-                                           self.tiling_grid_locations_y[i]), white, 1)
+                                           self.tiling_grid_locations_y[i]), black, 1)
         # Set the Canvas to tkinter
         self.tiling_canvas_modified = self.tiling_canvas.copy()
         self.tiling_im = Image.fromarray(self.tiling_canvas)
@@ -110,23 +117,20 @@ class GUIWindow(tk.Frame):
         self.tiling_im_tk_canvas.bind('<Motion>', self.tiling_area_mouse_motion)
         self.tiling_im_tk_canvas.bind('<Button-1>', self.tiling_area_mouse_click)
         self.tiling_im_tk_canvas.bind('<Button-3>', self.tiling_area_mouse_click_right)
-        self.tiling_current_hovered_tile = -1
-        self.tiling_current_selected_tile = -1
+        self.tiling_current_hovered_tile, self.tiling_current_selected_tile = -1, -1
         self.tiling_current_selected_tile_right = -1
 
         # Selection Area
-        self.total_selections_x = 16
-        self.total_selections_y = 10
+        # Temp hard code of tilemap size, intention is for user to input at runtime
+        self.total_selections_x, self.total_selections_y = 16, 10
         self.sel_tile = -1
-        self.sel_event_x = 0
-        self.sel_event_y = 0
+        self.sel_event_x, self.sel_event_y = 0, 0
         self.sel_clicked = False
         # Generate tiles from image
         self.tilemap = cv2.imread('tilemap.png')
         self.tilemap = cv2.cvtColor(self.tilemap, cv2.COLOR_BGR2RGB)
         self.sel_tiles_cv = []
-        self.start_coordinate_x = 0
-        self.start_coordinate_y = 0
+        self.start_coordinate_x, self.start_coordinate_y = 0, 0
         for i in range(self.total_selections_y):
             for j in range(self.total_selections_x):
                 self.sel_tiles_cv.append(
@@ -137,11 +141,10 @@ class GUIWindow(tk.Frame):
                             self.tiles_spacing_size * j)])
         # Render tiles to new opencv image
         self.sel_max_tiles_x = int(math.floor(app_selection_area[0] / ((grid_entry[0] * 4) + self.tiles_spacing)))
-        self.sel_max_tiles_y = int(math.ceil((self.total_selections_x * self.total_selections_y) / self.sel_max_tiles_x))
+        self.sel_max_tiles_y = int(
+            math.ceil((self.total_selections_x * self.total_selections_y) / self.sel_max_tiles_x))
         self.selection_canvas_x = self.sel_max_tiles_x * ((grid_entry[0] * 4) + self.tiles_spacing) + 1
         self.selection_canvas_y = self.sel_max_tiles_y * ((grid_entry[1] * 4) + self.tiles_spacing) + 1
-        print(f'Selection Canvas {self.sel_max_tiles_x} {self.sel_max_tiles_y} | {self.selection_canvas_x} '
-              f'{self.selection_canvas_y}')
         self.selection_canvas = np.zeros((self.selection_canvas_y, self.selection_canvas_x, 3), np.uint8)
         self.resized_tile_size = (grid_entry[0] * 4, grid_entry[1] * 4)
         # Resize tiles
@@ -163,8 +166,15 @@ class GUIWindow(tk.Frame):
         self.current_selection_selected_tile = -1
 
         # Context Area
-        load_map_btn = Button(master=self.context_area, text='LOAD JSON', anchor='n', command=self.read_json)
-        write_json_btn = Button(master=self.context_area, text='SAVE JSON', anchor='n', command=self.write_json)
+        self.load_map_btn = Button(master=self.context_area, text='LOAD JSON', anchor='n', command=self.read_json)
+        self.write_json_btn = Button(master=self.context_area, text='SAVE JSON', anchor='n', command=self.write_json)
+        self.layers_text, self.layers_selected_btns = [], []
+        [self.layers_text.append(Button(master=self.context_area, text=f'{layer_number_to_name[i]}', anchor='n'))
+         for i in range(len(layer_number_to_name))]
+        self.tiling_current_layer = 0
+        self.tk_layers_selected_value = IntVar(master=self.context_area, value=self.tiling_current_layer)
+        [self.layers_selected_btns.append(Radiobutton(master=self.context_area, variable=self.tk_layers_selected_value,
+                                                      padx=0, pady=0, value=i)) for i in range(len(self.layers_text))]
 
         # Grids
         self.tiling_area.grid(row=0, column=1, sticky=W)
@@ -173,14 +183,16 @@ class GUIWindow(tk.Frame):
         self.tiling_im_tk_canvas.grid(row=0, column=0, sticky=NW)
         self.sel_im_tk_canvas.grid(row=0, column=0, sticky=NW)
         # Context Menu
-        load_map_btn.grid(row=0, column=0)
-        write_json_btn.grid(row=1, column=0)
+        self.load_map_btn.grid(row=0, column=0)
+        self.write_json_btn.grid(row=0, column=1)
+        [self.layers_text[i].grid(row=i+1, column=0, columnspan=2) for i in range(len(self.layers_text))]
+        [self.layers_selected_btns[i].grid(row=i+1, column=2) for i in range(len(self.layers_selected_btns))]
         self.update()
 
     def get_coordinates_at_tiling_tile(self, tile: int) -> list:
         """Returns as [x1, x2, y1, y2]
         """
-        row = int(math.floor(tile/self.max_tiles_tiling_x))
+        row = int(math.floor(tile / self.max_tiles_tiling_x))
         column = tile
         while column >= self.max_tiles_tiling_x:
             column = column - self.max_tiles_tiling_x
@@ -225,6 +237,24 @@ class GUIWindow(tk.Frame):
         else:
             return column
 
+    def redraw_canvas(self) -> None:
+        """Redraws the canvas when the layer is switched.
+        """
+        n = 0
+        l = []
+        for i in range(len(self.tiling_tiles_all[self.tiling_current_layer])):
+            if self.tiling_tiles_all[self.tiling_current_layer][i] is not -1:
+                l.append(self.tiling_tiles_all[self.tiling_current_layer][i])
+                self.draw_tile_to_tiling_canvas_no_render(coordinates=self.get_coordinates_at_tiling_tile(i),
+                                                          tile=self.tiling_tiles_all[self.tiling_current_layer][i])
+            else:
+                n += 1
+        print(n)
+        print(l)
+        # Update Canvas
+        self.tiling_im_tk = ImageTk.PhotoImage(Image.fromarray(self.tiling_canvas_modified))
+        self.tiling_im_tk_canvas.itemconfig(self.tiling_im_tk_cv_cfg, image=self.tiling_im_tk)
+
     def draw_tile_to_tiling_canvas(self) -> None:
         coords_tile = self.get_coordinates_at_tiling_tile(self.tiling_current_hovered_tile)
         self.tiling_canvas_modified[coords_tile[2]:coords_tile[3], coords_tile[0]:coords_tile[1]] = \
@@ -232,6 +262,13 @@ class GUIWindow(tk.Frame):
         # Update Canvas
         self.tiling_im_tk = ImageTk.PhotoImage(Image.fromarray(self.tiling_canvas_modified))
         self.tiling_im_tk_canvas.itemconfig(self.tiling_im_tk_cv_cfg, image=self.tiling_im_tk)
+
+    def draw_tile_to_tiling_canvas_no_render(self, coordinates, tile) -> None:
+        """Behavior is similar to draw_tile_to_tiling_canvas, but does not render the canvas with an itemconfig call.
+        Used for updating multiple tiles at once to redraw the entire canvas.
+        """
+        self.tiling_canvas_modified[coordinates[2]:coordinates[3], coordinates[0]:coordinates[1]] = \
+            self.sel_tiles_cv[tile]
 
     def draw_tile_removal_to_tiling_canvas(self) -> None:
         """Removes pixel data from where a tile was, setting it to default empty values.
@@ -347,6 +384,11 @@ class GUIWindow(tk.Frame):
     def update(self) -> None:
         """Update elements of the GUI
         """
+        # Update the layer if we swapped layers
+        if self.tk_layers_selected_value.get() is not self.tiling_current_layer:
+            self.tiling_current_layer = self.tk_layers_selected_value.get()
+            self.tiling_canvas_tiles = self.tiling_tiles_all[self.tiling_current_layer]
+            self.redraw_canvas()
         # Update tile being edited
         if self.tiling_clicked and not self.tiling_right_clicked:  # Left click to place tile
             self.tiling_current_selected_tile = self.get_tile_at_tiling_coordinate(self.tiling_event_x,
@@ -382,7 +424,8 @@ class GUIWindow(tk.Frame):
         self.draw_squares_selection_tiles(self.get_coordinates_at_selection_tile(self.sel_tile))
 
         if self.sel_clicked:
-            self.current_selection_selected_tile = self.get_tile_at_selection_coordinate(self.sel_event_x, self.sel_event_y)
+            self.current_selection_selected_tile = self.get_tile_at_selection_coordinate(self.sel_event_x,
+                                                                                         self.sel_event_y)
             self.sel_clicked = False
         self.tiling_clicked = False
         self.tiling_right_clicked = False

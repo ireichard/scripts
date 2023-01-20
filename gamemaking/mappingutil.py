@@ -1,16 +1,12 @@
-import sys as system
-import os
 import math
 import json
 import copy
 
 import cv2
 import numpy as np
-
 import tkinter as tk
 from tkinter import *
 from PIL import Image, ImageTk
-from PIL import Image as PILImage
 
 gui_resolution = (1800, 1000)
 gui_update_ms = 10
@@ -20,13 +16,10 @@ app_context_area = (200, 800)  # Options area
 app_selection_area = (1800, 200)  # Tile selection area
 
 grid_entry = (8, 8)
-green = (0, 230, 0)
-red = (230, 0, 0)
-blue = (0, 0, 230)
-black = (0, 0, 0)
-null_tile = np.zeros((grid_entry[1], grid_entry[0], 3), np.uint8)
+green, red, blue, black = (0, 230, 0), (230, 0, 0), (0, 0, 230), (0, 0, 0)
+null_tile = np.zeros((grid_entry[1], grid_entry[0], 3), np.uint8)  # What an empty tile looks like
 
-layer_number_to_name = {
+layer_number_to_name = {  # Strings for context area
     0: 'Background',
     1: 'Object',
     2: 'Entity',
@@ -35,8 +28,19 @@ layer_number_to_name = {
     5: 'Lighting'
 }
 
+out_json_strs = {  # Json beginnings/endings for writine out json, NOT reading in
+    0: '"listBG":[',
+    1: '"listOBJ":[',
+    2: '"listENT":[',
+    3: '"listFG":[',
+    4: '"listEFF":[',
+    5: '"listLIT":['
+}
+
 
 class JSONEntry:
+    """JSON wrapper for tile data
+    """
     def __init__(self, x: int, y: int, tile: int):
         self._x = x
         self._y = y
@@ -50,6 +54,9 @@ class JSONEntry:
 
     def to_json(self):
         return json.dumps(self, default=lambda o: o.__dict__, separators=(',', ':'))
+
+    def __str__(self) -> str:
+        return f'JSON Wrapper at x:{self._x} y:{self._y} tile:{self._tile}'
 
 
 class GUIWindow(tk.Frame):
@@ -187,6 +194,9 @@ class GUIWindow(tk.Frame):
         self.write_json_btn.grid(row=0, column=1)
         [self.layers_text[i].grid(row=i+1, column=0, columnspan=2) for i in range(len(self.layers_text))]
         [self.layers_selected_btns[i].grid(row=i+1, column=2) for i in range(len(self.layers_selected_btns))]
+
+        # Start the GUI
+        self.tiling_canvas_tiles = self.tiling_tiles_all[self.tiling_current_layer]
         self.update()
 
     def get_coordinates_at_tiling_tile(self, tile: int) -> list:
@@ -240,17 +250,11 @@ class GUIWindow(tk.Frame):
     def redraw_canvas(self) -> None:
         """Redraws the canvas when the layer is switched.
         """
-        n = 0
-        l = []
+        self.tiling_canvas_modified = np.zeros((self.tiling_canvas_y, self.tiling_canvas_x, 3), np.uint8)
         for i in range(len(self.tiling_tiles_all[self.tiling_current_layer])):
             if self.tiling_tiles_all[self.tiling_current_layer][i] is not -1:
-                l.append(self.tiling_tiles_all[self.tiling_current_layer][i])
                 self.draw_tile_to_tiling_canvas_no_render(coordinates=self.get_coordinates_at_tiling_tile(i),
                                                           tile=self.tiling_tiles_all[self.tiling_current_layer][i])
-            else:
-                n += 1
-        print(n)
-        print(l)
         # Update Canvas
         self.tiling_im_tk = ImageTk.PhotoImage(Image.fromarray(self.tiling_canvas_modified))
         self.tiling_im_tk_canvas.itemconfig(self.tiling_im_tk_cv_cfg, image=self.tiling_im_tk)
@@ -325,94 +329,87 @@ class GUIWindow(tk.Frame):
     def write_json(self) -> None:
         _x = 0
         _y = 0
-        entries = []
+        all_map_entries = []
         # Json preambles for object data, can be edited here temporarily instead of user defined in GUI
         # May change this later so other users can define layer names
-        out_start = '{'
-        out_start_l0 = '"listBG":['
-        out_start_l1 = '"listOBJ":['
-        out_start_l2 = '"listENT":['
-        out_start_l3 = '"listFG":['
-        out_start_l4 = '"listEFF":['
-        out_start_l5 = '"listLIT":['
-        out_end_mid = '],'
-        out_end = ']}'
+        out_start, out_end_mid, out_end = '{', '],', '}'
         out = out_start
-        out += out_start_l0
-        for i in range(len(self.tiling_canvas_tiles)):
-            if self.tiling_canvas_tiles[i] != -1:
-                # Calculate coordinates
-                _y = int(math.floor(i / self.max_tiles_tiling_x))
-                if i >= self.max_tiles_tiling_x:
-                    _x = i - _y * self.max_tiles_tiling_x
-                else:
-                    _x = i
-                # Export to json wrapper object
-                entries.append(JSONEntry(x=_x, y=_y, tile=self.tiling_canvas_tiles[i]))
+        for i in range(len(self.tiling_tiles_all)):
+            all_map_entries.append([])
+            for j in range(len(self.tiling_tiles_all[i])):
+                if self.tiling_tiles_all[i][j] != -1:
+                    # Calculate Coordinates
+                    _y = int(math.floor(j / self.max_tiles_tiling_x))
+                    if j >= self.max_tiles_tiling_x:
+                        _x = j - _y * self.max_tiles_tiling_x
+                    else:
+                        _x = j
+                    # Export to json wrapper object
+                    all_map_entries[i].append(JSONEntry(x=_x, y=_y, tile=self.tiling_tiles_all[i][j]))
         # Invert y axis for Unity, opencv draws from top left y=0, Unity uses a math x-y plot
         max_entry = 0
-        min_entry = sys.maxsize
-        for i in entries:
+        for i in all_map_entries[0]:
             if max_entry < i.get_y():
                 max_entry = i.get_y()
-            if min_entry > i.get_y():
-                min_entry = i.get_y()
-        # Invert
-        for i in range(len(entries)):
-            entries[i].set_y(y=(max_entry - entries[i].get_y()))
+        for i in all_map_entries:
+            [j.set_y(y=(max_entry - j.get_y())) for j in i]  # Invert
         # Write to json
-        for i in range(len(entries)):
-            out = out + entries[i].to_json()
-            if i != len(entries) - 1:
+        for i in range(len(all_map_entries)):
+            set_val = False
+            out = out + out_json_strs[i]
+            for j in all_map_entries[i]:
+                set_val = True
+                out = out + j.to_json()
                 out = out + ','
-        out = out + out_end_mid
-        out = out + out_start_l1 + out_end_mid
-        out = out + out_start_l2 + out_end_mid
-        out = out + out_start_l3 + out_end_mid
-        out = out + out_start_l4 + out_end_mid
-        out = out + out_start_l5 + out_end
+            if set_val:
+                out = out[:-1] + out_end_mid
+            else:
+                out = out + out_end_mid
+        out = out[:-1] + out_end
         text = open('out.json', 'w')
         _ = text.write(out)
         text.close()
 
-    @staticmethod
-    def read_json():
-        """TODO Add
+    def read_json(self) -> None:
+        """Read json map data from disk.
         """
+        # Clear map data that already exists
+        self.all_map_data = []
         print('Read JSON button click')
 
     def update(self) -> None:
         """Update elements of the GUI
         """
-        # Update the layer if we swapped layers
+        # Update the layer in the tiling layer if we swapped layers
         if self.tk_layers_selected_value.get() is not self.tiling_current_layer:
             self.tiling_current_layer = self.tk_layers_selected_value.get()
             self.tiling_canvas_tiles = self.tiling_tiles_all[self.tiling_current_layer]
             self.redraw_canvas()
-        # Update tile being edited
-        if self.tiling_clicked and not self.tiling_right_clicked:  # Left click to place tile
+        # Get the tile being edited in the tiling layer
+        if self.tiling_clicked and not self.tiling_right_clicked:  # User left clicked to place tile
             self.tiling_current_selected_tile = self.get_tile_at_tiling_coordinate(self.tiling_event_x,
                                                                                    self.tiling_event_y)
-        if self.tiling_right_clicked and not self.tiling_clicked:  # Right click to remove tile
+        if self.tiling_right_clicked and not self.tiling_clicked:  # User right clicked to remove tile
             self.tiling_current_selected_tile_right = self.get_tile_at_tiling_coordinate(self.tiling_event_x,
                                                                                          self.tiling_event_y)
-        # Tiling
+        # Update the tiling area
         if self.tiling_event_x != 0 or self.tiling_event_y != 0:
             # Draw blue square on the hovered tile
             self.tiling_current_hovered_tile = self.get_tile_at_tiling_coordinate(self.tiling_event_x,
                                                                                   self.tiling_event_y)
             self.draw_square_tiling_tiles(self.get_coordinates_at_tiling_tile(self.tiling_current_hovered_tile))
-            # Only draw the new tile on click
+            # Draw the selected tile on a left click
             if self.tiling_clicked and not self.tiling_right_clicked:
-                if self.current_selection_selected_tile > -1:
+                if self.current_selection_selected_tile > -1:  # Check if a tile is selected in the first place
                     self.tiling_canvas_tiles[self.tiling_current_selected_tile] = self.current_selection_selected_tile
                 self.draw_tile_to_tiling_canvas()
+            # Remove the tile on a right click
             if self.tiling_right_clicked and not self.tiling_clicked:
                 self.tiling_canvas_tiles[self.tiling_current_selected_tile_right] = -1  # Clear the tile data
                 self.draw_tile_removal_to_tiling_canvas()  # Draw removed tile
         else:
             self.tiling_current_hovered_tile = -1
-        # Selection
+        # Update the selection area
         if self.sel_event_x != 0 or self.sel_event_y != 0:
             # Calculate hovered tile location
             self.current_selection_hovered_tile = self.get_tile_at_selection_coordinate(self.sel_event_x,
@@ -422,7 +419,7 @@ class GUIWindow(tk.Frame):
         # Draw green and red squares in the selection area, green = hovered, red = selected
         self.sel_tile = self.get_tile_at_selection_coordinate(self.sel_event_x, self.sel_event_y)
         self.draw_squares_selection_tiles(self.get_coordinates_at_selection_tile(self.sel_tile))
-
+        # Get tile swapped to in the selection layer
         if self.sel_clicked:
             self.current_selection_selected_tile = self.get_tile_at_selection_coordinate(self.sel_event_x,
                                                                                          self.sel_event_y)

@@ -18,6 +18,7 @@ app_selection_area = (1800, 200)  # Tile selection area
 grid_entry = (8, 8)
 green, red, blue, black = (0, 230, 0), (230, 0, 0), (0, 0, 230), (0, 0, 0)
 null_tile = np.zeros((grid_entry[1], grid_entry[0], 3), np.uint8)  # What an empty tile looks like
+out_json_name = 'out.json'
 
 layer_number_to_name = {  # Strings for context area
     0: 'Background',
@@ -141,11 +142,8 @@ class GUIWindow(tk.Frame):
         for i in range(self.total_selections_y):
             for j in range(self.total_selections_x):
                 self.sel_tiles_cv.append(
-                    self.tilemap[
-                    i * grid_entry[0] + (self.tiles_spacing_size * i):(i * grid_entry[0] + grid_entry[0]) + (
-                            self.tiles_spacing_size * i),
-                    j * grid_entry[1] + (self.tiles_spacing_size * j):(j * grid_entry[1] + grid_entry[1]) + (
-                            self.tiles_spacing_size * j)])
+                    self.tilemap[i * grid_entry[0] +
+                                 (self.tiles_spacing_size * i):(i * grid_entry[0] + grid_entry[0]) + (self.tiles_spacing_size * i), j * grid_entry[1] + (self.tiles_spacing_size * j):(j * grid_entry[1] + grid_entry[1]) + (self.tiles_spacing_size * j)])
         # Render tiles to new opencv image
         self.sel_max_tiles_x = int(math.floor(app_selection_area[0] / ((grid_entry[0] * 4) + self.tiles_spacing)))
         self.sel_max_tiles_y = int(
@@ -366,16 +364,25 @@ class GUIWindow(tk.Frame):
             else:
                 out = out + out_end_mid
         out = out[:-1] + out_end
-        text = open('out.json', 'w')
+        text = open(out_json_name, 'w')
         _ = text.write(out)
         text.close()
 
     def read_json(self) -> None:
         """Read json map data from disk.
         """
-        # Clear map data that already exists
-        self.all_map_data = []
-        print('Read JSON button click')
+        self.tiling_tiles_all = []   # Clear map data that already exists
+        # Load json from disk
+        tiles_by_layer = []
+        text = open(out_json_name, 'r')
+        tiles = json.load(text)
+        [tiles_by_layer.append(tiles[list(tiles.keys())[i]]) for i in range(len(tiles.keys()))]
+        data_l0 = []
+        [data_l0.append(tiles_by_layer[0][i]) for i in range(len(tiles_by_layer[0]))]
+        print(tiles_by_layer)
+        print(data_l0)
+        # Load object data into tiles
+        # Update the tilemap
 
     def update(self) -> None:
         """Update elements of the GUI
